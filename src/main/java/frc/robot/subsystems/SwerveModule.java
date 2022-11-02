@@ -1,9 +1,12 @@
 package frc.robot.subsystems;
 
 import com.ctre.phoenix.motorcontrol.ControlMode;
+import com.ctre.phoenix.motorcontrol.NeutralMode;
 import com.ctre.phoenix.motorcontrol.TalonFXSensorCollection;
 import com.ctre.phoenix.motorcontrol.can.TalonFX;
 import com.ctre.phoenix.sensors.CANCoder;
+import com.ctre.phoenix.sensors.CANCoderConfiguration;
+import com.ctre.phoenix.sensors.SensorTimeBase;
 
 import edu.wpi.first.math.controller.PIDController;
 import edu.wpi.first.math.geometry.Rotation2d;
@@ -27,6 +30,10 @@ public class SwerveModule {
     private final boolean absoluteEncoderReversed;
     private final double absoluteEncoderOffsetRad;
 
+    
+
+    private int encId;
+
 
     public SwerveModule(int driveMotorId, int turningMotorId, boolean driveMotorReversed, boolean turningMotorReversed,
             int absoluteEncoderId, double absoluteEncoderOffset, boolean absoluteEncoderReversed) {
@@ -43,23 +50,39 @@ public class SwerveModule {
         driveEncoder = driveMotor.getSensorCollection();
         turningEncoder = turningMotor.getSensorCollection();
 
+        //set to coast;
+        driveMotor.setNeutralMode(NeutralMode.Coast);
+        turningMotor.setNeutralMode(NeutralMode.Coast);
+
+
+        //turningEncoder.setIntegratedSensorPosition(absoluteEncoder., timeoutMs)
+
+        encId = absoluteEncoderId;
+
+        CANCoderConfiguration config = new CANCoderConfiguration();
+        // set units of the CANCoder to radians, with velocity being radians per second
+        config.sensorCoefficient = 2 * Math.PI / 4096.0; //convert to radians
+        config.unitString = "rad";
+        config.sensorTimeBase = SensorTimeBase.PerSecond;
+        absoluteEncoder.configAllSettings(config);
+
         //driveEncoder.setPositionConversionFactor(ModuleConstants.kDriveEncoderRot2Meter);
         ///driveEncoder.setVelocityConversionFactor(ModuleConstants.kDriveEncoderRPM2MeterPerSec);
-        //turningEncoder.setPositionConversionFactor(ModuleConstants.kTurningEncoderRot2Rad);
         //turningEncoder.setVelocityConversionFactor(ModuleConstants.kTurningEncoderRPM2RadPerSec);
 
         turningPidController = new PIDController(ModuleConstants.kPTurning, 0, 0);
         turningPidController.enableContinuousInput(-Math.PI, Math.PI);
 
+
         resetEncoders();
     }
-
+    
     public double getDrivePosition() { //math is for manual conversion factor because TalonFX controllers do not have ConversionFactor functions
         return ((driveEncoder.getIntegratedSensorPosition() / ModuleConstants.kEncoderCPR) * ModuleConstants.kDriveEncoderRot2Meter);
     }
 
     public double getTurningPosition() {
-        return ((turningEncoder.getIntegratedSensorPosition() / ModuleConstants.kEncoderCPR) * ModuleConstants.kTurningEncoderRot2Rad);
+        return (getAbsoluteEncoderRad());
     }
 
     public double getDriveVelocity() {
@@ -67,12 +90,12 @@ public class SwerveModule {
     }
 
     public double getTurningVelocity() {
-        return ((turningEncoder.getIntegratedSensorVelocity() / ModuleConstants.kEncoderCPR) * ModuleConstants.kTurningEncoderRPM2RadPerSec);
+        return (absoluteEncoder.getVelocity());
     }
 
     public double getAbsoluteEncoderRad() {
         double angle = absoluteEncoder.getAbsolutePosition();
-        angle = Math.toRadians(angle);
+        //angle = Math.toRadians(angle);
         angle -= absoluteEncoderOffsetRad;
         return angle * (absoluteEncoderReversed ? -1.0 : 1.0);
     }
@@ -87,6 +110,7 @@ public class SwerveModule {
     }
 
     public void setDesiredState(SwerveModuleState state) {
+        SmartDashboard.putNumber("Swerve[" + encId + "] state", getAbsoluteEncoderRad());
         if (Math.abs(state.speedMetersPerSecond) < 0.001) {
             stop();
             return;
@@ -94,7 +118,7 @@ public class SwerveModule {
         state = SwerveModuleState.optimize(state, getState().angle);
         driveMotor.set(ControlMode.PercentOutput,state.speedMetersPerSecond / DriveConstants.kPhysicalMaxSpeedMetersPerSecond);
         turningMotor.set(ControlMode.PercentOutput,turningPidController.calculate(getTurningPosition(), state.angle.getRadians()));
-        SmartDashboard.putString("Swerve[" + absoluteEncoder.getAbsolutePosition() + "] state", state.toString());
+
     }
 
     public void stop() {
