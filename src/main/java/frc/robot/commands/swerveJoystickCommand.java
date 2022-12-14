@@ -2,9 +2,13 @@ package frc.robot.commands;
 
 import java.util.function.Supplier;
 
+import org.photonvision.PhotonCamera;
+
+import edu.wpi.first.math.controller.PIDController;
 import edu.wpi.first.math.filter.SlewRateLimiter;
 import edu.wpi.first.math.kinematics.ChassisSpeeds;
 import edu.wpi.first.math.kinematics.SwerveModuleState;
+import edu.wpi.first.math.util.Units;
 import edu.wpi.first.wpilibj2.command.CommandBase;
 import frc.robot.Constants.DriveConstants;
 import frc.robot.Constants.OIConstants;
@@ -14,17 +18,34 @@ public class SwerveJoystickCommand extends CommandBase {
 
     private final SwerveSubsystem swerveSubsystem;
     private final Supplier<Double> xSpdFunction, ySpdFunction, turningSpdFunction;
-    private final Supplier<Boolean> fieldOrientedFunction;
+    private final Supplier<Boolean> fieldOrientedFunction, alignFunction, resetDirection;
     private final SlewRateLimiter xLimiter, yLimiter, turningLimiter;
+
+    public final double cameraHeight = Units.inchesToMeters(5);// replace number with height of camera on robot
+    public final double targetHeight = Units.feetToMeters(5);// replace number with height of targets
+    public final double cameraPitch = Units.degreesToRadians(65);// replace number with angle of camera
+
+    PhotonCamera camera = new PhotonCamera("gloworm");
+
+    //pid constants
+    final double linearP = 0.0;
+    final double linearD = 0.0;
+
+    final double angularP = 0.1;
+    final double angularD = 0.005;
+    PIDController turnController = new PIDController(angularP, 0, angularD);
+
 
     public SwerveJoystickCommand(SwerveSubsystem swerveSubsystem,
             Supplier<Double> xSpdFunction, Supplier<Double> ySpdFunction, Supplier<Double> turningSpdFunction,
-            Supplier<Boolean> fieldOrientedFunction) {
+            Supplier<Boolean> fieldOrientedFunction, Supplier<Boolean> alignButton, Supplier<Boolean> resetDirectionButton) {
         this.swerveSubsystem = swerveSubsystem;
         this.xSpdFunction = xSpdFunction;
         this.ySpdFunction = ySpdFunction;
         this.turningSpdFunction = turningSpdFunction;
         this.fieldOrientedFunction = fieldOrientedFunction;
+        this.alignFunction = alignButton;
+        this.resetDirection = resetDirectionButton;
         this.xLimiter = new SlewRateLimiter(DriveConstants.kTeleDriveMaxAccelerationUnitsPerSecond);
         this.yLimiter = new SlewRateLimiter(DriveConstants.kTeleDriveMaxAccelerationUnitsPerSecond);
         this.turningLimiter = new SlewRateLimiter(DriveConstants.kTeleDriveMaxAngularAccelerationUnitsPerSecond);
@@ -50,11 +71,29 @@ public class SwerveJoystickCommand extends CommandBase {
         // 3. Make the driving smoother
         xSpeed = xLimiter.calculate(xSpeed) * DriveConstants.kTeleDriveMaxSpeedMetersPerSecond;
         ySpeed = yLimiter.calculate(ySpeed) * DriveConstants.kTeleDriveMaxSpeedMetersPerSecond;
-        turningSpeed = turningLimiter.calculate(turningSpeed)
-                * DriveConstants.kTeleDriveMaxAngularSpeedRadiansPerSecond;
+
+        if(!alignFunction.get()) {
+            turningSpeed = turningLimiter.calculate(turningSpeed) * DriveConstants.kTeleDriveMaxAngularSpeedRadiansPerSecond;
+        }
+        else {
+            var result = camera.getLatestResult();
+            
+            if(result.hasTargets()) {
+                turningSpeed = turningLimiter.calculate(-turnController.calculate(result.getBestTarget().getYaw(),0)) * DriveConstants.kTeleDriveMaxAngularSpeedRadiansPerSecond;
+            }
+            else{
+                turningSpeed = 0;
+            }
+
+        }   
+        
+        if(resetDirection.get()) {
+            swerveSubsystem.zeroHeading();   
+        }
 
         // 4. Construct desired chassis speeds
         ChassisSpeeds chassisSpeeds;
+        
         if (fieldOrientedFunction.get()) {
             // Relative to field
             chassisSpeeds = ChassisSpeeds.fromFieldRelativeSpeeds(
